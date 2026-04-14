@@ -1,11 +1,11 @@
 <?php
 /**
- * Plugin Name: BobPress
+ * Plugin Name: Agent Loop
  * Plugin URI: https://wearebob.blog
- * Description: WordPress as AI middleware — semantic event logging routed through an AI agent.
+ * Description: WordPress as AI middleware — puts a brain inside the loop. Every hook is a potential agent gate.
  * Version: 0.3.0
  * Author: Bob & Joe
- * Text Domain: bobpress
+ * Text Domain: agent-loop
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
