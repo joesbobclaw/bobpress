@@ -3,7 +3,7 @@
  * Plugin Name: Agent Loop
  * Plugin URI: https://wearebob.blog
  * Description: WordPress as AI middleware — puts a brain inside the loop. Every hook is a potential agent gate.
- * Version: 0.3.2
+ * Version: 0.3.3
  * Author: Bob & Joe
  * Text Domain: agent-loop
  */
@@ -614,4 +614,150 @@ function agentloop_on_404() {
     $referer = $_SERVER['HTTP_REFERER'] ?? 'direct';
     $visitor = agentloop_visitor_context();
     agentloop_send( "⚠️ 404: {$url}\n{$visitor} | from: {$referer}" );
+}
+
+// ─── Hook: Menus ─────────────────────────────────────────────────────────────
+
+add_action( 'wp_update_nav_menu', 'agentloop_on_menu_update', 10, 1 );
+function agentloop_on_menu_update( int $menu_id ) {
+    $menu = wp_get_nav_menu_object( $menu_id );
+    $name = $menu ? $menu->name : "menu #{$menu_id}";
+    $user = wp_get_current_user()->user_login;
+    agentloop_send( "🗂️ Menu updated: \"{$name}\" by {$user}" );
+}
+
+add_action( 'wp_delete_nav_menu', 'agentloop_on_menu_delete', 10, 1 );
+function agentloop_on_menu_delete( int $menu_id ) {
+    $user = wp_get_current_user()->user_login;
+    agentloop_send( "🗂️ Menu deleted: #{$menu_id} by {$user}" );
+}
+
+// ─── Hook: Widgets ───────────────────────────────────────────────────────────
+
+add_action( 'update_option_sidebars_widgets', 'agentloop_on_sidebars_update', 10, 2 );
+function agentloop_on_sidebars_update( $old, $new ) {
+    $user = wp_get_current_user()->user_login;
+    agentloop_send( "🧩 Sidebar/widget layout changed by {$user}" );
+}
+
+// ─── Hook: Option watchlist ───────────────────────────────────────────────────
+
+define( 'AL_WATCHED_OPTIONS', [
+    'blogname'             => 'Site title',
+    'blogdescription'      => 'Tagline',
+    'siteurl'              => 'Site URL',
+    'home'                 => 'Home URL',
+    'admin_email'          => 'Admin email',
+    'default_role'         => 'Default user role',
+    'permalink_structure'  => 'Permalink structure',
+    'users_can_register'   => 'Open registration',
+    'default_comment_status' => 'Default comment status',
+    'comment_moderation'   => 'Comment moderation',
+] );
+
+add_action( 'updated_option', 'agentloop_on_option_update', 10, 3 );
+function agentloop_on_option_update( string $option, $old_value, $new_value ) {
+    $watched = AL_WATCHED_OPTIONS;
+    if ( ! isset( $watched[ $option ] ) ) return;
+    if ( $old_value === $new_value ) return;
+
+    $label    = $watched[ $option ];
+    $old_str  = is_scalar( $old_value ) ? (string) $old_value : wp_json_encode( $old_value );
+    $new_str  = is_scalar( $new_value ) ? (string) $new_value : wp_json_encode( $new_value );
+    $user     = wp_get_current_user()->user_login ?: 'system';
+
+    agentloop_send( "⚙️ Setting changed: {$label}\n\"{$old_str}\" → \"{$new_str}\"\n👤 {$user}" );
+}
+
+// ─── Hook: Theme switch ───────────────────────────────────────────────────────
+
+add_action( 'switch_theme', 'agentloop_on_theme_switch', 10, 3 );
+function agentloop_on_theme_switch( string $new_name, WP_Theme $new_theme, WP_Theme $old_theme ) {
+    $user = wp_get_current_user()->user_login;
+    agentloop_send( "🎨 Theme switched: \"{$old_theme->get('Name')}\" → \"{$new_name}\" by {$user}" );
+}
+
+add_action( 'customize_save_after', 'agentloop_on_customizer_save', 10, 1 );
+function agentloop_on_customizer_save( $manager ) {
+    $user = wp_get_current_user()->user_login;
+    agentloop_send( "🎨 Customizer saved by {$user}" );
+}
+
+// ─── Hook: Media ─────────────────────────────────────────────────────────────
+
+add_action( 'add_attachment', 'agentloop_on_attachment_add', 10, 1 );
+function agentloop_on_attachment_add( int $post_id ) {
+    $post     = get_post( $post_id );
+    $filename = basename( get_attached_file( $post_id ) ?: '' );
+    $mime     = $post->post_mime_type ?? 'unknown';
+    $user     = wp_get_current_user()->user_login;
+    agentloop_send( "📎 File uploaded: {$filename} ({$mime}) by {$user}" );
+}
+
+add_action( 'delete_attachment', 'agentloop_on_attachment_delete', 10, 1 );
+function agentloop_on_attachment_delete( int $post_id ) {
+    $filename = basename( get_attached_file( $post_id ) ?: "attachment #{$post_id}" );
+    $user     = wp_get_current_user()->user_login;
+    agentloop_send( "🗑️ File deleted: {$filename} by {$user}" );
+}
+
+// ─── Hook: Updates ───────────────────────────────────────────────────────────
+
+add_action( 'upgrader_process_complete', 'agentloop_on_upgrade', 10, 2 );
+function agentloop_on_upgrade( $upgrader, array $options ) {
+    $type   = $options['type'] ?? 'unknown';
+    $action = $options['action'] ?? 'update';
+    $user   = wp_get_current_user()->user_login ?: 'auto-update';
+
+    if ( $type === 'plugin' ) {
+        $plugins = $options['plugins'] ?? [];
+        if ( empty( $plugins ) && isset( $options['plugin'] ) ) {
+            $plugins = [ $options['plugin'] ];
+        }
+        $list = implode( ', ', array_map( fn($p) => dirname($p) ?: $p, $plugins ) );
+        agentloop_send( "🔄 Plugin {$action}: {$list} by {$user}" );
+    } elseif ( $type === 'theme' ) {
+        $themes = $options['themes'] ?? [];
+        $list   = implode( ', ', $themes );
+        agentloop_send( "🔄 Theme {$action}: {$list} by {$user}" );
+    } elseif ( $type === 'core' ) {
+        global $wp_version;
+        agentloop_send( "🔄 WordPress core {$action} to {$wp_version} by {$user}" );
+    }
+}
+
+// ─── Hook: User / role changes ────────────────────────────────────────────────
+
+add_action( 'set_user_role', 'agentloop_on_role_change', 10, 3 );
+function agentloop_on_role_change( int $user_id, string $role, array $old_roles ) {
+    $user     = get_userdata( $user_id );
+    $old      = implode( ', ', $old_roles ) ?: 'none';
+    $changer  = wp_get_current_user()->user_login ?: 'system';
+    agentloop_send( "👤 Role change: {$user->user_login} → {$role} (was: {$old}) by {$changer}" );
+}
+
+add_action( 'delete_user', 'agentloop_on_user_delete', 10, 1 );
+function agentloop_on_user_delete( int $user_id ) {
+    $user    = get_userdata( $user_id );
+    $login   = $user ? $user->user_login : "#{$user_id}";
+    $changer = wp_get_current_user()->user_login ?: 'system';
+    agentloop_send( "🗑️ User deleted: {$login} by {$changer}" );
+}
+
+add_action( 'profile_update', 'agentloop_on_profile_update', 10, 2 );
+function agentloop_on_profile_update( int $user_id, WP_User $old_user ) {
+    $new_user = get_userdata( $user_id );
+    $changer  = wp_get_current_user()->user_login ?: 'self';
+
+    // Only report security-relevant changes
+    $changes = [];
+    if ( $old_user->user_email !== $new_user->user_email ) {
+        $changes[] = "email: {$old_user->user_email} → {$new_user->user_email}";
+    }
+    if ( $old_user->user_pass !== $new_user->user_pass ) {
+        $changes[] = 'password changed';
+    }
+
+    if ( empty( $changes ) ) return;
+    agentloop_send( "👤 Profile update: {$new_user->user_login} — " . implode( ', ', $changes ) . " by {$changer}" );
 }
