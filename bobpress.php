@@ -3,7 +3,7 @@
  * Plugin Name: Agent Loop
  * Plugin URI: https://wearebob.blog
  * Description: WordPress as AI middleware — puts a brain inside the loop. Every hook is a potential agent gate.
- * Version: 0.3.3
+ * Version: 0.3.4
  * Author: Bob & Joe
  * Text Domain: agent-loop
  */
@@ -458,7 +458,9 @@ add_action( 'save_post', 'agentloop_on_save_post', 10, 3 );
 function agentloop_on_save_post( int $post_id, WP_Post $post, bool $update ) {
     if ( wp_is_post_revision( $post_id ) ) return;
     if ( wp_is_post_autosave( $post_id ) ) return;
-    if ( in_array( $post->post_type, ['revision', 'auto-draft', 'nav_menu_item', 'attachment', AL_CPT], true ) ) return;
+    // Exclude noise CPTs — Agent Chat messages, artifacts, etc.
+    $excluded_types = ['revision', 'auto-draft', 'nav_menu_item', 'attachment', AL_CPT, 'chat_message', 'artifact', 'feedback'];
+    if ( in_array( $post->post_type, $excluded_types, true ) ) return;
 
     $action   = $update ? 'Post updated' : 'Post created';
     $source   = agentloop_detect_source();
@@ -477,7 +479,8 @@ function agentloop_on_save_post( int $post_id, WP_Post $post, bool $update ) {
 add_action( 'transition_post_status', 'agentloop_on_status_transition', 10, 3 );
 function agentloop_on_status_transition( string $new_status, string $old_status, WP_Post $post ) {
     if ( $new_status === $old_status ) return;
-    if ( in_array( $post->post_type, ['revision', 'auto-draft', 'nav_menu_item', AL_CPT], true ) ) return;
+    $excluded_types = ['revision', 'auto-draft', 'nav_menu_item', AL_CPT, 'chat_message', 'artifact', 'feedback'];
+    if ( in_array( $post->post_type, $excluded_types, true ) ) return;
     $notable = [ 'publish', 'pending', 'private', 'trash' ];
     if ( ! in_array( $new_status, $notable, true ) ) return;
 
@@ -603,6 +606,57 @@ function agentloop_on_search_no_results() {
     } else {
         agentloop_send( "🔍 No results: \"{$query}\" (anonymous)" );
     }
+}
+
+// ─── Hook: loop_no_results (empty archives/categories/tags) ────────────────────
+
+add_action( 'loop_no_results', 'agentloop_on_loop_no_results', 10, 1 );
+function agentloop_on_loop_no_results( WP_Query $query ) {
+    if ( is_admin() ) return;
+    if ( is_search() ) return; // handled separately
+
+    $context = 'unknown page';
+    if ( is_category() ) {
+        $cat     = get_queried_object();
+        $context = "category \"{$cat->name}\"";
+    } elseif ( is_tag() ) {
+        $tag     = get_queried_object();
+        $context = "tag \"{$tag->name}\"";
+    } elseif ( is_author() ) {
+        $author  = get_queried_object();
+        $context = "author \"{$author->display_name}\"";
+    } elseif ( is_date() ) {
+        $context = 'date archive ' . get_the_date('Y-m');
+    } elseif ( is_home() ) {
+        $context = 'home/blog index';
+    }
+
+    $visitor = agentloop_visitor_context();
+    $url     = home_url( $_SERVER['REQUEST_URI'] ?? '' );
+    agentloop_send( "📢 Empty loop: {$context} — no posts found\n{$visitor}\n🔗 {$url}" );
+}
+
+// ─── Hook: application_password_did_authenticate ────────────────────────────
+
+add_action( 'application_password_did_authenticate', 'agentloop_on_app_password_auth', 10, 2 );
+function agentloop_on_app_password_auth( WP_User $user, array $item ) {
+    $app_name = $item['name'] ?? 'unknown app';
+    $ip       = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $ua       = substr( $_SERVER['HTTP_USER_AGENT'] ?? '', 0, 80 );
+    agentloop_send( "🔐 App auth: {$user->user_login} via \"{$app_name}\"\n🌐 {$ip} | {$ua}" );
+}
+
+// ─── Hook: auth_cookie_malformed (bad cookie alert) ─────────────────────────
+
+// Rate-limit to once per hour per IP to avoid spam
+add_action( 'auth_cookie_malformed', 'agentloop_on_bad_cookie', 10, 2 );
+function agentloop_on_bad_cookie( $cookie, string $scheme ) {
+    $ip       = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $cache_key = 'al_bad_cookie_' . md5( $ip );
+    if ( get_transient( $cache_key ) ) return; // already alerted for this IP recently
+    set_transient( $cache_key, 1, HOUR_IN_SECONDS );
+    $ua = substr( $_SERVER['HTTP_USER_AGENT'] ?? '', 0, 80 );
+    agentloop_send( "⚠️ Bad auth cookie from {$ip} (scheme: {$scheme})\n{$ua}\n💡 May be a misconfigured app or stale session." );
 }
 
 // ─── Hook: 404 ───────────────────────────────────────────────────────────────
